@@ -55,7 +55,7 @@ class SpreadsheetCompressor:
         
         # Calculate sequential compression ratios
         original_size = original_shape[0] * original_shape[1]
-        anchor_size = len(structural_result['anchor_rows']) * len(structural_result['anchor_columns'])
+        anchor_size = structural_result['non_empty_cells_count']  # Use non-empty cells count
         inverted_size = len(inverted_result)
         final_size = len(aggregation_result['type_groups'])
         
@@ -96,56 +96,74 @@ class SpreadsheetCompressor:
         # Create address mapping for the filtered anchors
         address_map = create_address_map(anchor_rows, anchor_columns)
         
-        # Extract skeleton (filtered anchor cells only)
+        # Extract skeleton (filtered anchor cells only, excluding empty cells)
         skeleton = []
+        non_empty_cells = []
         for i, row_idx in enumerate(anchor_rows):
             skeleton_row = []
             for j, col_idx in enumerate(anchor_columns):
                 cell_value = df.iloc[row_idx, col_idx]
                 cell_address = get_cell_address(row_idx, col_idx)
-                skeleton_row.append({
+                
+                # Skip empty cells in skeleton
+                if (cell_value is None or 
+                    pd.isna(cell_value) or 
+                    (isinstance(cell_value, np.floating) and np.isnan(cell_value)) or
+                    str(cell_value).strip() == ''):
+                    continue
+                
+                cell_info = {
                     'address': cell_address,
                     'value': cell_value,
                     'data_type': detect_data_type(cell_value)
-                })
-            skeleton.append(skeleton_row)
+                }
+                skeleton_row.append(cell_info)
+                non_empty_cells.append(cell_info)
+            
+            if skeleton_row:  # Only add rows that have non-empty cells
+                skeleton.append(skeleton_row)
         
-        # Calculate compression ratio based on k-neighborhood filtering
+        # Calculate compression ratio based on k-neighborhood filtering and empty cell removal
         total_cells = len(df) * len(df.columns)
-        filtered_cells = len(anchor_rows) * len(anchor_columns)
-        compression_ratio = filtered_cells / total_cells if total_cells > 0 else 0
+        anchor_cells = len(anchor_rows) * len(anchor_columns)
+        non_empty_cells_count = len(non_empty_cells)
+        compression_ratio = non_empty_cells_count / total_cells if total_cells > 0 else 0
         
         return {
             'anchor_rows': anchor_rows,
             'anchor_columns': anchor_columns,
             'address_map': address_map,
             'skeleton': skeleton,
+            'non_empty_cells': non_empty_cells,
             'compression_ratio': compression_ratio,
             'k_neighborhood': 3,
             'total_cells': total_cells,
-            'filtered_cells': filtered_cells
+            'anchor_cells': anchor_cells,
+            'non_empty_cells_count': non_empty_cells_count
         }
     
     def _create_anchor_dataframe(self, df: pd.DataFrame, structural_result: Dict[str, Any]) -> pd.DataFrame:
         """
-        Create a smaller DataFrame containing only the anchor cells.
-        This represents the "24×8 sheet" mentioned in the paper.
+        Create a smaller DataFrame containing only the non-empty anchor cells.
+        This represents the "24×8 sheet" mentioned in the paper, with empty cells removed.
         """
-        anchor_rows = structural_result['anchor_rows']
-        anchor_columns = structural_result['anchor_columns']
+        # Use the non-empty cells data from structural result
+        non_empty_cells = structural_result.get('non_empty_cells', [])
         
-        # Create new DataFrame with only anchor cells
-        anchor_data = []
-        for row_idx in anchor_rows:
-            row_data = []
-            for col_idx in anchor_columns:
-                row_data.append(df.iloc[row_idx, col_idx])
-            anchor_data.append(row_data)
+        if not non_empty_cells:
+            # Return empty DataFrame if no non-empty cells
+            return pd.DataFrame()
         
-        # Create column names for the anchor DataFrame
-        anchor_col_names = [f"Col_{i}" for i in range(len(anchor_columns))]
+        # Create DataFrame from non-empty cells
+        data = []
+        for cell in non_empty_cells:
+            data.append({
+                'address': cell['address'],
+                'value': cell['value'],
+                'data_type': cell['data_type']
+            })
         
-        return pd.DataFrame(anchor_data, columns=anchor_col_names)
+        return pd.DataFrame(data)
     
     def _inverted_index_translation_sequential(self, anchor_df: pd.DataFrame, structural_result: Dict[str, Any]) -> Dict[str, List[str]]:
         """
@@ -154,28 +172,19 @@ class SpreadsheetCompressor:
         Creates value-to-address mapping and removes empty cells.
         """
         inverted_index = defaultdict(list)
-        anchor_rows = structural_result['anchor_rows']
-        anchor_columns = structural_result['anchor_columns']
         
-        for i, row_idx in enumerate(anchor_rows):
-            for j, col_idx in enumerate(anchor_columns):
-                cell_value = anchor_df.iloc[i, j]
-                # Use original cell address for consistency
-                cell_address = get_cell_address(row_idx, col_idx)
-                
-                # Skip empty cells (this is the "removing empty cells" step)
-                # Handle various types of empty/NaN values including np.float64(nan)
-                if (cell_value is None or 
-                    pd.isna(cell_value) or 
-                    (isinstance(cell_value, np.floating) and np.isnan(cell_value)) or
-                    str(cell_value).strip() == ''):
-                    continue
-                
-                # Convert value to string for dictionary key
-                value_key = str(cell_value)
-                
-                # Add address to the list for this value
-                inverted_index[value_key].append(cell_address)
+        # Use the non-empty cells data directly
+        non_empty_cells = structural_result.get('non_empty_cells', [])
+        
+        for cell in non_empty_cells:
+            cell_value = cell['value']
+            cell_address = cell['address']
+            
+            # Convert value to string for dictionary key
+            value_key = str(cell_value)
+            
+            # Add address to the list for this value
+            inverted_index[value_key].append(cell_address)
         
         return dict(inverted_index)
     
@@ -259,7 +268,8 @@ class SpreadsheetCompressor:
         prompt += "STEP 1 - STRUCTURAL ANCHOR EXTRACTION:\n"
         anchors = compressed_data['structural_anchors']
         anchor_df = compressed_data['anchor_dataframe']
-        prompt += f"Extracted anchor cells: {len(anchors['anchor_rows'])}×{len(anchors['anchor_columns'])} = {len(anchors['anchor_rows']) * len(anchors['anchor_columns'])} cells\n"
+        prompt += f"Extracted anchor cells: {len(anchors['anchor_rows'])}×{len(anchors['anchor_columns'])} = {anchors['anchor_cells']} cells\n"
+        prompt += f"Non-empty cells after filtering: {anchors['non_empty_cells_count']} cells\n"
         prompt += f"Anchor rows: {anchors['anchor_rows'][:10]}{'...' if len(anchors['anchor_rows']) > 10 else ''}\n"
         prompt += f"Anchor columns: {anchors['anchor_columns'][:10]}{'...' if len(anchors['anchor_columns']) > 10 else ''}\n"
         prompt += f"K-neighborhood filtering: {anchors.get('k_neighborhood', 3)}\n"
