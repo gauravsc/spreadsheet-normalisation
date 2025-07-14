@@ -1,0 +1,15 @@
+[project]
+name = "spreadsheet-normalisation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "click>=8.2.1",
+    "numpy>=2.3.1",
+    "openai>=1.95.1",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.1",
+    "python-dotenv>=1.1.1",
+    "rich>=14.0.0",
+]

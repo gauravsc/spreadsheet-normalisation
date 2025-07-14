@@ -1,0 +1,7 @@
+openpyxl
+pandas
+numpy
+openai
+python-dotenv
+click
+rich 
