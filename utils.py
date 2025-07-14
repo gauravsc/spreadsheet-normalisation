@@ -66,7 +66,10 @@ def detect_data_type(value: Any, number_format: str = 'General') -> str:
     Returns:
         Data type string
     """
-    if value is None or pd.isna(value):
+    # Handle various types of empty/NaN values including np.float64(nan)
+    if (value is None or 
+        pd.isna(value) or 
+        (isinstance(value, np.floating) and np.isnan(value))):
         return 'Empty'
     
     # Check number format strings first
@@ -234,7 +237,10 @@ def format_cell_for_markdown(address: str, value: Any, format_info: Dict = None)
     Returns:
         Markdown-formatted cell string
     """
-    if value is None or pd.isna(value):
+    # Handle various types of empty/NaN values including np.float64(nan)
+    if (value is None or 
+        pd.isna(value) or 
+        (isinstance(value, np.floating) and np.isnan(value))):
         value_str = "None"
     else:
         value_str = str(value)

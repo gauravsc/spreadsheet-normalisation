@@ -84,7 +84,7 @@ def test_compression():
     # Create test file
     import os
     # df = create_test_data()
-    test_file = os.path.join(os.path.dirname(__file__), "mature_sites.xlsx")
+    test_file = os.path.join(os.path.dirname(__file__), "pnl.xlsx")
     # df.to_excel(test_file, index=False)
     
     try:
